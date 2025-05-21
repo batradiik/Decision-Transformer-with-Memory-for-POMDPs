@@ -1,0 +1,5 @@
+model,epochs_to_300,final_return,final_loss
+ffm_metrics,3.00,354.90,0.43
+gru_metrics,1.00,499.80,0.43
+lstm_metrics,0.00,500.00,0.44
+None_metrics,,44.90,0.45
