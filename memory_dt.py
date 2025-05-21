@@ -131,12 +131,21 @@ class MemoryDecisionTransformer(nn.Module):
         # Memory module (optional)
         if memory_type == 'gru':
             # TODO: Implement GRU memory
+            self.memory = nn.GRU(n_embed, memory_dim, batch_first=True)
             self.memory_proj = nn.Linear(memory_dim, n_embed)
         elif memory_type == 'lstm':
             # TODO: Implement LSTM memory
+            self.memory = nn.LSTM(n_embed, memory_dim, batch_first=True)
             self.memory_proj = nn.Linear(memory_dim, n_embed)
+        elif memory_type == "ffm":  # Fast & Forgetful Memory 
+            self.memory = None  
+            self.memory_dim = memory_dim
+            self.state_to_mem = nn.Linear(n_embed, memory_dim)
+            self.memory_proj = nn.Linear(memory_dim, n_embed)
+            self.gamma_param = nn.Parameter(torch.zeros(memory_dim))
         else:
             self.memory = None
+            self.memory_proj = None
         
         # Transformer
         transformer_layer = nn.TransformerEncoderLayer(
@@ -147,6 +156,7 @@ class MemoryDecisionTransformer(nn.Module):
             batch_first=True
         )
         self.transformer = nn.TransformerEncoder(transformer_layer, n_layer)
+        self.action_head = nn.Linear(n_embed, n_actions)
         
         # action head
         self.action_head = nn.Linear(n_embed, n_actions)
@@ -182,23 +192,56 @@ class MemoryDecisionTransformer(nn.Module):
         return_embeddings = self.return_encoder(rtgs)
         
         # add memory
-        if self.memory is not None:
+        memory_out = None
+        # if self.memory is not None:
+        if self.memory is not None and self.memory_type in {'gru', 'lstm'}:
             if self.memory_type == 'gru':
                 if self.hidden_state is None:
                     # TODO: Implement GRU memory
+                    h0 = torch.zeros(
+                        1, batch_size, self.memory.hidden_size,
+                        device=states.device
+                    )
+                    self.hidden_state = h0
                 
                 memory_out, self.hidden_state = self.memory(state_embeddings, self.hidden_state)
             elif self.memory_type == 'lstm':
                 if self.hidden_state is None:
-                    # TODO: Implement LSTM memory
-                
+                    h0 = torch.zeros(
+                        1, batch_size, self.memory.hidden_size,
+                        device=states.device
+                    )
+                    c0 = torch.zeros(
+                        1, batch_size, self.memory.hidden_size,
+                        device=states.device
+                    )
+                    self.hidden_state = (h0, c0)
                 memory_out, self.hidden_state = self.memory(state_embeddings, self.hidden_state)
+                
+        elif self.memory_type == 'ffm':
+            gamma = torch.sigmoid(self.gamma_param)  # (0,1)
+            bsz, seq_len = states.shape[0], states.shape[1]
+            if self.hidden_state is None:
+                self.hidden_state = torch.zeros(
+                    bsz, self.memory_dim,
+                    device=states.device, dtype=state_embeddings.dtype
+                )
+            h = self.hidden_state
+            mem_seq = []
+            for t in range(seq_len):
+                inp = self.state_to_mem(state_embeddings[:, t])
+                h = gamma * h + (1 - gamma) * inp
+                mem_seq.append(h)
+            memory_out = torch.stack(mem_seq, dim=1)  # [B, seq, mem_dim]
+            self.hidden_state = h.detach()
+
             
-            # project memory to embedding dimension
-            memory_embedding = self.memory_proj(memory_out)
+            # memory to embedding dimension
+        if memory_out is not None:
+                memory_embedding = self.memory_proj(memory_out)
+                state_embeddings = state_embeddings + memory_embedding
             
-            # combine memory with state embeddings
-            state_embeddings = state_embeddings + memory_embedding
+                
         
         # prepare sequence for transformer (R_t, o_t, a_t)
         sequence = torch.cat([
@@ -572,6 +615,10 @@ def train_memory_dt(
     plt.tight_layout()
     plt.savefig(f"models/memory_dt_{env_name}_{memory_type}_training.png")
     plt.close()
+    
+    np.savez(f"models/memory_dt_{env_name}_{memory_type}_metrics.npz",
+             train_losses=np.array(train_losses),
+             val_returns=np.array(val_returns))
     
     return model, train_losses, val_returns
 

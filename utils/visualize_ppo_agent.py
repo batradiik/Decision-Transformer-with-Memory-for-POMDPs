@@ -26,7 +26,7 @@ def parse_args():
                         help='Number of episodes to visualize')
     parser.add_argument('--hidden_dim', type=int, default=64,
                         help='Hidden dimension used in the model')
-    parser.add_argument('--rnn_type', type=str, default='gru', choices=['gru', 'lstm'],
+    parser.add_argument('--rnn_type', type=str, default='gru', choices=['gru', 'lstm', 'ffm'],
                         help='Type of RNN used in the model')
     parser.add_argument('--delay', type=float, default=0.05,
                         help='Delay between steps for better visualization')
